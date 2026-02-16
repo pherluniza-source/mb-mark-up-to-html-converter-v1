@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Markdown Table → HTML Table (Offline Converter)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+<body>
+  <h1>Markdown Table → HTML Table Converter (Offline)</h1>
+  <p>This page runs entirely offline. Paste a Markdown table below and click <strong>Convert</strong> to get a clean HTML table. No CSS is added to the table output.</p>
+
+  <fieldset>
+    <legend>Options</legend>
+    <label>
+      <input type="checkbox" id="optLinks" checked>
+      Make Markdown links clickable (&lt;a&gt;)
+    </label>
+    <br>
+    <label>
+      <input type="checkbox" id="optBorders">
+      Add basic table borders using HTML attributes (<code>border</code>, <code>cellpadding</code>, <code>cellspacing</code>)
+    </label>
+    <br>
+    <label>
+      <input type="checkbox" id="optTwoCols" checked>
+      Keep only the first 2 columns (helpful for inputs that repeat columns)
+    </label>
+  </fieldset>
+
+  <h2>Input</h2>
+  <textarea id="mdInput" rows="14" style="width:100%" placeholder="Paste your Markdown table here..."></textarea>
+  <div style="margin-top:8px;">
+    <button id="btnConvert">Convert →</button>
+    <button id="btnClear" title="Clear input and outputs">Clear</button>
+  </div>
+
+  <h2>HTML Output</h2>
+  <textarea id="htmlOutput" rows="14" style="width:100%" readonly placeholder="Converted HTML will appear here..."></textarea>
+  <div style="margin-top:8px;">
+    <button id="btnCopy">Copy HTML</button>
+    <button id="btnDownload">Download HTML snippet</button>
+  </div>
+
+  <h2>Live Preview</h2>
+  <div id="preview" style="padding:8px; background:#f7f7f7;"></div>
+
+  <details style="margin-top:16px;">
+    <summary>Example Markdown table</summary>
+<pre>
+| Fund name | Net Asset Value per Unit (NAVPU) |
+|---------------------------------------------|----------------------------------|
+| [Metro Money Market Fund](https://www.metrobank.com.ph/assets/metro-money-market-fund.pdf) | 1.985032 |
+| [Metro$ World Equity Feeder Fund](https://www.metrobank.com.ph/assets/metro-dollar-world-equity-feeder-fund.pdf) | 1.799655 |
+</pre>
+  </details>
+
+<script>
+(function(){
+  const mdInput = document.getElementById('mdInput');
+  const htmlOutput = document.getElementById('htmlOutput');
+  const preview = document.getElementById('preview');
+  const btnConvert = document.getElementById('btnConvert');
+  const btnCopy = document.getElementById('btnCopy');
+  const btnDownload = document.getElementById('btnDownload');
+  const btnClear = document.getElementById('btnClear');
+  const optLinks = document.getElementById('optLinks');
+  const optBorders = document.getElementById('optBorders');
+  const optTwoCols = document.getElementById('optTwoCols');
+
+  function escapeHtml(str){
+    return str.replace(/[&<>\"']/g, function(ch){
+      switch(ch){
+        case '&': return '&amp;';
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '"': return '&quot;';
+        case "'": return '&#39;';
+      }
+    });
+  }
+
+  function convertLinks(cell){
+    // Replace Markdown links with placeholders, escape rest, then restore anchors
+    const links = [];
+    const re = /\[([^\]]+)\]\(([^)]+)\)/g; // [text](url)
+    let temp = cell.replace(re, function(_, text, url){
+      const i = links.length;
+      links.push('<a href="' + url + '" target="_blank" rel="noopener">' + escapeHtml(text) + '</a>');
+      return '::LINK' + i + '::';
+    });
+    temp = escapeHtml(temp);
+    links.forEach((a, i)=>{
+      temp = temp.replace('::LINK' + i + '::', a);
+    });
+    return temp;
+  }
+
+  function isSeparatorRow(cells){
+    if (!cells || !cells.length) return false;
+    // A separator row is typically --- or :---:
+    return cells.every(function(c){
+      const t = c.trim();
+      return /^:?-{3,}:?$/.test(t);
+    });
+  }
+
+  function parseMarkdownTable(md, opts){
+    // Keep only lines that look like table rows (contain a pipe)
+    const lines = md.split(/\r?\n/).filter(l => l.trim().length && l.indexOf('|') !== -1);
+    if (!lines.length) return '';
+
+    // Convert each line into an array of cells
+    let rows = lines.map(l => {
+      const inner = l.replace(/^\s*\|?\s*/, '').replace(/\s*\|\s*$/, '');
+      let cells = inner.split('|').map(c => c.trim());
+      cells = cells.filter(c => c !== ''); // drop empties from consecutive pipes
+      return cells;
+    });
+
+    if (!rows.length) return '';
+
+    // Header = first row; if second row is --- separators, skip it
+    let header = rows[0];
+    let startIdx = 1;
+    if (rows.length > 1 && isSeparatorRow(rows[1])) {
+      startIdx = 2;
+    }
+
+    const keepTwo = !!opts.keepTwoCols;
+    if (keepTwo) {
+      header = header.slice(0, 2);
+    }
+
+    const addBorders = !!opts.addBorders;
+    const clickable = !!opts.clickableLinks;
+
+    let tableAttrs = '';
+    if (addBorders) {
+      tableAttrs = ' border="1" cellpadding="6" cellspacing="0"';
+    }
+
+    let out = '<table' + tableAttrs + '>';
+
+    if (header && header.length){
+      out += '<thead><tr>' + header.map(h => '<th>' + (clickable ? convertLinks(h) : escapeHtml(h)) + '</th>').join('') + '</tr></thead>';
+    }
+
+    out += '<tbody>';
+    for (let r = startIdx; r < rows.length; r++){
+      let cells = rows[r].slice();
+      if (keepTwo) cells = cells.slice(0, 2);
+      while (header && header.length && cells.length < header.length) cells.push('');
+      out += '<tr>' + cells.map(c => {
+        const html = clickable ? convertLinks(c) : escapeHtml(c);
+        return '<td>' + html + '</td>';
+      }).join('') + '</tr>';
+    }
+    out += '</tbody></table>';
+
+    return out;
+  }
+
+  function convert(){
+    const md = mdInput.value || '';
+    const html = parseMarkdownTable(md, {
+      clickableLinks: optLinks.checked,
+      addBorders: optBorders.checked,
+      keepTwoCols: optTwoCols.checked
+    });
+    htmlOutput.value = html;
+    preview.innerHTML = html || '<em>No table parsed. Paste a Markdown table above and click Convert.</em>';
+  }
+
+  btnConvert.addEventListener('click', convert);
+  btnClear.addEventListener('click', function(){
+    mdInput.value = '';
+    htmlOutput.value = '';
+    preview.innerHTML = '';
+  });
+
+  btnCopy.addEventListener('click', function(){
+    htmlOutput.select();
+    document.execCommand('copy');
+  });
+
+  btnDownload.addEventListener('click', function(){
+    const blob = new Blob([htmlOutput.value], {type: 'text/html'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'table.html';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(a.href);
+  });
+})();
+</script>
+</body>
+</html>
+``
